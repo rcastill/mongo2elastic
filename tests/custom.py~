@@ -1,0 +1,45 @@
+import elasticsearch
+import pymongo
+import json
+import sys
+
+def main():
+    es_access = 'http://elastic:changeme@localhost:9200'
+    es = elasticsearch.Elasticsearch(es_access)
+    mongo_client = pymongo.MongoClient()
+    db = mongo_client.ducksdev
+
+    total = db.monitoring.find().count()
+    errfile = open('ERRORS', 'w')
+
+    i = 0
+    for doc in db.monitoring.find(timeout=False): # bad practice -> FIX!
+        i += 1
+        _id = str(doc['_id'])
+        del doc['_id']
+
+        if doc.has_key('status'):
+            doc['servicestatus'] = doc['status']
+            del doc['status']
+
+        try:
+            es.index(index='ducksdev',
+                     doc_type='monitoring',
+                     id=_id,
+                     body=doc)
+        except elasticsearch.exceptions.RequestError as reqerr:
+            errfile.write("CATCHED ERROR WITH:\n")
+            errfile.write(str(doc)+'\n[')
+            errfile.write(reqerr.error)
+            errfile.write('] ')
+            errfile.write(str(reqerr.info)+'\n')
+            continue
+
+        print '{0}\r'.format(str('{0:.2f}'.format(float(i)/total*100)) + '% ' + str(i) + '/' + str(total)),
+        sys.stdout.flush()
+    print
+    errfile.close()
+        
+
+if __name__ == '__main__':
+    main()
