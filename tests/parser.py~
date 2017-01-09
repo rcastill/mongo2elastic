@@ -1,0 +1,28 @@
+class InvalidSyntax(Exception):
+    pass
+
+def parse(mongo_client, path):
+    with open(path) as f:
+        for i, line in enumerate(f):
+            split = line.split(':')
+
+            if len(split) != 2:
+                raise InvalidSyntax("At line %d", i + 1)
+            
+            db = split[0]
+
+            if db not in mongo_client.database_names():
+                raise InvalidSyntax("DB cannot be empty")
+
+            
+            
+            details = split[1]
+            if len(details) == 0:
+                raise InvalidSyntax("Details cannot be empty")
+
+            instr = details[0]
+            if instr not in ('+', '-'):
+                raise InvalidSyntax("Instruction must be +|-")
+
+            collections = details[1:].strip().split()
+            
