@@ -53,7 +53,7 @@ class FilterConfig(object):
                               db=db_name)
 
             # If there is an original key with generated name, FAIL!
-            assert not doc.has_key(new_key) # first should check if default!
+            assert not doc.has_key(new_key), 'Generated key already exists: %s' %new_key
 
             doc[new_key] = doc[key]
             del doc[key]
@@ -67,7 +67,7 @@ class FilterConfig(object):
         if not doc.has_key(timestamp):
             return
 
-        assert not doc.has_key(self.common_timestamp)
+        assert not doc.has_key(self.common_timestamp), 'Common timestamp field already exists!' 
 
         if type(doc[timestamp]) != datetime.datetime:
             if tsformat != None:
