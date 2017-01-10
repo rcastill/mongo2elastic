@@ -59,7 +59,7 @@ def parse(mongo_client, path):
                  yield ParseResult(InvalidSyntax("Instruction must be +|-"))
 
             # Get collection names in details
-            collections = details[1:].strip().split()
+            collections = details[1:].strip().split(',')
             # Get collections in database
             collection_names = db.collection_names()
 
