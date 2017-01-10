@@ -2,6 +2,7 @@ import elasticsearch
 import pymongo
 import json
 import sys
+import datetime
 
 class InvalidSyntax(Exception):
     pass
