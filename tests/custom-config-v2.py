@@ -199,7 +199,7 @@ def print_progress(index, filter_config, i, total):
     dest_txt = filter_config.get_index_name(index) + '/' +\
                filter_config.get_type_name(index)
     
-    sys.stdout.write('{: >0} {: <40} {: <40} {: >20}\r'.format(prog_per,
+    sys.stdout.write('{: <9} {: <40} {: <40} {: >20}\r'.format(prog_per,
                                                            from_txt,
                                                            dest_txt,
                                                            prog_raw))
