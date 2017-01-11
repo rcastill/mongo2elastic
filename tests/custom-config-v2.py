@@ -51,6 +51,22 @@ class FilterConfig(object):
     def is_default(self):
         return self.common_field_format == None
 
+    def get_index_name(self, index):
+        if self.common_index_format == None:
+            return index.index
+        # if index name is not default, prefer custom
+        elif index.index == index.db_name:
+            return self.common_index_format.format(db=index.db_name,
+                                                   coll=index.coll_name)
+
+    def get_type_name(self, index):
+        if self.common_type_format == None:
+            return index.type
+        # if type name is not default, prefer custom
+        elif index.type == index.coll_name:
+            return self.common_type_format.format(db=index.db_name,
+                                                  coll=index.coll_name)        
+
     def filter_fields(self, doc, db_name, coll_name):
         keys = doc.keys()
         for key in keys:
@@ -277,8 +293,8 @@ def main():
 
             # Without try, so it fails in case of RequestError (use --test first)
             result = es.search(
-                index=index.index,
-                doc_type=index.type,
+                index=filter_config.get_index_name(index),
+                doc_type=filter_config.get_type_name(index),
                 body={
                     'sort':[{
                         criterion:{
@@ -382,21 +398,11 @@ def main():
                 print_progress(index.db_name, index.coll_name, i, total)
                 continue
             
-            # Prepare params for elasticsearch index
-            params = dict()
-            params['index'] = index.index if filter_config.common_index_format == None\
-                              else filter_config.common_index_format\
-                                   .format(db=index.db_name,
-                                           coll=index.coll_name)
-            params['doc_type'] = index.type if filter_config.common_type_format == None\
-                                 else filter_config.common_type_format\
-                                      .format(db=index.db_name,
-                                              coll=index.coll_name)
-            params['id'] = _id
-            params['body'] = doc
-
             # If not a test, actually push to ES
-            es.index(**params)
+            es.index(index=filter_config.get_index_name(index),
+                     doc_type=filter_config.get_type_name(index),
+                     id=_id,
+                     body=doc)
 
             # If not test print progress after indexing
             print_progress(index.db_name, index.coll_name, i, total)
