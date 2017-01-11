@@ -332,7 +332,7 @@ def main():
 
         # Nothing to do
         if cursor == None or cursor.count() == 0:
-            print '[EMPTY] Nothing to do for %s.%s' %(index.db_name,
+            print '[ EMPTY ] Nothing to do for %s.%s' %(index.db_name,
                                               index.coll_name)
             continue
             
@@ -392,7 +392,7 @@ def main():
                                  else filter_config.common_type_format\
                                       .format(db=index.db_name,
                                               coll=index.coll_name)
-            params['_id'] = _id
+            params['id'] = _id
             params['body'] = doc
 
             # If not a test, actually push to ES
