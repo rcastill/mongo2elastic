@@ -39,18 +39,23 @@ class FilterConfig(object):
     def __init__(self, common_timestamp=None,
                  common_field_format=None,
                  sync_field=None,
+                 sync_field_oid_suffix='__OBJECT_ID',
                  common_index_format=None,
                  common_type_format=None):
         
         self.common_timestamp = common_timestamp
         self.common_field_format = common_field_format
         self.sync_field = sync_field
+        self.sync_field_oid_suffix = sync_field_oid_suffix
         self.common_index_format = common_index_format
         self.common_type_format = common_type_format
 
     def is_default(self):
         return self.common_field_format == None
 
+    def sync_oid_field(self):
+        return self.sync_field + self.sync_field_oid_suffix
+    
     def get_index_name(self, index):
         if self.common_index_format == None:
             return index.index
@@ -71,7 +76,8 @@ class FilterConfig(object):
         keys = doc.keys()
         for key in keys:
             if key == self.common_timestamp or\
-               key == self.sync_field:
+               key == self.sync_field or\
+               key == self.sync_oid_field():
                 continue
             
             new_key = self.common_field_format\
@@ -123,6 +129,8 @@ class FilterConfig(object):
 
         if type(_id) == bson.objectid.ObjectId:
             doc[self.sync_field] = _id.generation_time
+            doc[self.sync_oid_field()] = str(_id)
+
         elif self.common_timestamp != None:
             # First run self.add_common_timestamp
             assert doc.has_key(self.common_timestamp)
@@ -270,6 +278,7 @@ def main():
         'common_timestamp',
         'common_field_format',
         'sync_field',
+        'sync_field_oid_suffix',
         'common_index_format',
         'common_type_format'))
 
@@ -350,8 +359,16 @@ def main():
                                     bson.objectid.ObjectId)
 
                     if has_objectid:
-                        relative = bson.objectid.ObjectId.from_datetime(ts)
+                        # Try to fully recover object id
+                        if last.has_key(filter_config.sync_oid_field()):
+                            relative = bson.objectid.ObjectId(
+                                last[filter_config.sync_oid_field()])
+                        # Recover from datetime
+                        else:
+                            relative = bson.objectid.ObjectId.from_datetime(ts)
+
                         cursor = coll.find({'_id':{'$gt':relative}})
+                        
                     elif index.timestamp != None:
                         relative = get_ts_relative(index, ts)
                         cursor = coll.find({index.timestamp:{'$gt':relative}})
