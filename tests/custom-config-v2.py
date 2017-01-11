@@ -185,7 +185,7 @@ def type2str(t):
     return str(t).replace("<type '", '').replace("'>", '')
 
 def print_title():
-    title = '{: <9} {: <40} {: <40} {: >20}'.format('%',
+    title = '{0: <9} {1: <40} {2: <40} {3: >20}'.format('%',
                                                     'DB.COLLECTION',
                                                     'INDEX/TYPE',
                                                     'DOCS')
@@ -199,7 +199,7 @@ def print_progress(index, filter_config, i, total):
     dest_txt = filter_config.get_index_name(index) + '/' +\
                filter_config.get_type_name(index)
     
-    sys.stdout.write('{: <9} {: <40} {: <40} {: >20}\r'.format(prog_per,
+    sys.stdout.write('{0: <9} {1: <40} {2: <40} {3: >20}\r'.format(prog_per,
                                                            from_txt,
                                                            dest_txt,
                                                            prog_raw))
@@ -346,7 +346,7 @@ def main():
                     Create ObjectId with retrieved timestamp from
                     elasticsearch
                     '''
-                    has_objectid = (type(oll.find_one()['_id']) ==
+                    has_objectid = (type(coll.find_one()['_id']) ==
                                     bson.objectid.ObjectId)
 
                     if has_objectid:
@@ -377,7 +377,8 @@ def main():
         i = 0
             
         for doc in cursor:
-            _id = str(doc['_id'])
+            object_id = doc['_id']
+            _id = str(object_id)
             del doc['_id']
 
             # Add a common timestamp field if set in filters
@@ -386,7 +387,7 @@ def main():
                                                      index.tsformat)
 
             # Add a sync timestamp field if set in filters
-            filter_config.add_sync_field_ifset(doc, _id)
+            filter_config.add_sync_field_ifset(doc, object_id)
             
             if not filter_config.is_default():
                 filter_config.filter_fields(doc,
