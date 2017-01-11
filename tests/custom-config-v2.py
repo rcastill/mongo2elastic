@@ -19,7 +19,7 @@ class IndexConfig(object):
         self.timestamp = timestamp
         self.tsformat = tsformat
         self.index = db_name if index == None else index
-        self.type = coll_name if type == None else _type
+        self.type = coll_name if type == None else type
 
 class ElasticsearchConfig(object):  
     def __init__(self, user='', password='', uri='localhost', port='9200'):
@@ -70,7 +70,8 @@ class FilterConfig(object):
     def filter_fields(self, doc, db_name, coll_name):
         keys = doc.keys()
         for key in keys:
-            if key == self.common_timestamp:
+            if key == self.common_timestamp or\
+               key == self.sync_field:
                 continue
             
             new_key = self.common_field_format\
@@ -113,14 +114,13 @@ class FilterConfig(object):
         else:
             doc[self.common_timestamp] = doc[timestamp]
 
-    def add_sync_field_ifset(self, doc):
+    def add_sync_field_ifset(self, doc, _id):
         if self.sync_field == None:
             return
 
         # Sync field should not exist in document
         assert not doc.has_key(self.sync_field)
 
-        _id = doc['_id']
         if type(_id) == bson.objectid.ObjectId:
             doc[self.sync_field] = _id.generation_time
         elif self.common_timestamp != None:
@@ -184,11 +184,26 @@ def make_params(config, section, *param_names):
 def type2str(t):
     return str(t).replace("<type '", '').replace("'>", '')
 
-def print_progress(db_name, coll_name, i, total):
-    print '{0}\r'.format(
-        str('[{0:.2f}'.format(float(i)/total*100)) + '%] ' +
-        db_name + '.' + coll_name + ' ' + str(i) + '/'
-        + str(total)),
+def print_title():
+    title = '{: <9} {: <40} {: <40} {: >20}'.format('%',
+                                                    'DB.COLLECTION',
+                                                    'INDEX/TYPE',
+                                                    'DOCS')
+    print title
+    print '=' * len(title)
+
+def print_progress(index, filter_config, i, total):
+    prog_per = str('[{0:.2f}'.format(float(i)/total*100)) + '%]'
+    prog_raw = str(i) + '/' + str(total)
+    from_txt = index.db_name + '.' + index.coll_name
+    dest_txt = filter_config.get_index_name(index) + '/' +\
+               filter_config.get_type_name(index)
+    
+    sys.stdout.write('{: >0} {: <40} {: <40} {: >20}\r'.format(prog_per,
+                                                           from_txt,
+                                                           dest_txt,
+                                                           prog_raw))
+    
     sys.stdout.flush()
     
 def usage():
@@ -275,6 +290,12 @@ def main():
         print '[ERROR] sync_field nor common_timestamp are not set. Cowardly Aborting.'
         return 1
 
+    # Aesthetics
+    print_title()
+
+    # Print nothing to do in the end
+    nothing_to_do = []
+    
     for index in indices:
         if index.db_name not in mongo_client.database_names():
             print 'Database "%s" not found.' %db_name
@@ -348,8 +369,7 @@ def main():
 
         # Nothing to do
         if cursor == None or cursor.count() == 0:
-            print '[ EMPTY ] Nothing to do for %s.%s' %(index.db_name,
-                                              index.coll_name)
+            nothing_to_do.append(index)
             continue
             
         # stats data
@@ -366,7 +386,7 @@ def main():
                                                      index.tsformat)
 
             # Add a sync timestamp field if set in filters
-            filter_config.add_sync_field_ifset(doc)
+            filter_config.add_sync_field_ifset(doc, _id)
             
             if not filter_config.is_default():
                 filter_config.filter_fields(doc,
@@ -395,7 +415,7 @@ def main():
                     return
                 
                 # If test, print progress here
-                print_progress(index.db_name, index.coll_name, i, total)
+                print_progress(index, filter_config, i, total)
                 continue
             
             # If not a test, actually push to ES
@@ -405,13 +425,18 @@ def main():
                      body=doc)
 
             # If not test print progress after indexing
-            print_progress(index.db_name, index.coll_name, i, total)
+            print_progress(index, filter_config, i, total)
 
         # </for doc in coll.find()>
         print
 
+    print
+    for index in nothing_to_do:
+        print '[ ! ] Nothing to do for %s.%s' %(index.db_name,
+                                                    index.coll_name)
+
     if test:
-        print 'Test passed succesfully.'
+        print '\nTest passed succesfully.'
                 
 
 if __name__ == '__main__':
