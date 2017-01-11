@@ -3,6 +3,9 @@ import sys
 import datetime
 import pymongo
 import elasticsearch
+import bson
+import dateutil.parser
+import optparse
 
 class IndexConfig(object):
     def __init__(self, db_name, coll_name,
@@ -31,11 +34,19 @@ class ElasticsearchConfig(object):
             return base.format('{0}:{1}@'.format(self.user, self.password))
         else:
             return base.format('')
-
+        
 class FilterConfig(object):
-    def __init__(self, common_timestamp=None, common_field_format=None):
+    def __init__(self, common_timestamp=None,
+                 common_field_format=None,
+                 sync_field=None,
+                 common_index_format=None,
+                 common_type_format=None):
+        
         self.common_timestamp = common_timestamp
         self.common_field_format = common_field_format
+        self.sync_field = sync_field
+        self.common_index_format = common_index_format
+        self.common_type_format = common_type_format
 
     def is_default(self):
         return self.common_field_format == None
@@ -64,10 +75,20 @@ class FilterConfig(object):
         if self.common_timestamp == None:
             return
 
-        if not doc.has_key(timestamp):
-            return
+        # Common timestamp field should not exist in document
+        assert not doc.has_key(self.common_timestamp), 'Common timestamp field already exists!'
 
-        assert not doc.has_key(self.common_timestamp), 'Common timestamp field already exists!' 
+        # Use generation timestamp if available by default.
+        if timestamp == None:
+            object_id = doc['_id']
+
+            if type(object_id) == bson.objectid.ObjectId:
+                doc[self.common_timestamp] = object_id.generation_time
+
+            return                
+        
+        if not doc.has_key(timestamp):
+            return 
 
         if type(doc[timestamp]) != datetime.datetime:
             if tsformat != None:
@@ -76,6 +97,21 @@ class FilterConfig(object):
         else:
             doc[self.common_timestamp] = doc[timestamp]
 
+    def add_sync_field_ifset(self, doc):
+        if self.sync_field == None:
+            return
+
+        # Sync field should not exist in document
+        assert not doc.has_key(self.sync_field)
+
+        _id = doc['_id']
+        if type(_id) == bson.objectid.ObjectId:
+            doc[self.sync_field] = _id.generation_time
+        elif self.common_timestamp != None:
+            # First run self.add_common_timestamp
+            assert doc.has_key(self.common_timestamp)
+            doc[self.sync_field] = doc[self.common_timestamp]
+            
 class DynamicMappingSimulation(object):
     class Index(object):
         def __init__(self):
@@ -140,20 +176,27 @@ def print_progress(db_name, coll_name, i, total):
     sys.stdout.flush()
     
 def usage():
-    print 'Usage: ', sys.argv[0], '[test|full|sync] config_file'
+    print 'Usage: ', sys.argv[0], '[--test] [full|sync] config_file'
     sys.exit(1)
 
 # TODO: sync support
     
 def main():
-    if len(sys.argv) != 3:
+    optparser = optparse.OptionParser()
+    optparser.add_option('-t', '--test',
+                         action='store_true',
+                         dest='test',
+                         default=False)
+    opts, args = optparser.parse_args()
+    
+    if len(args) != 2:
         usage()
 
-    if sys.argv[1] not in ('test', 'full', 'sync'):
+    if args[0] not in ('full', 'sync'):
         usage()        
 
     config = ConfigParser.RawConfigParser()
-    config.read(sys.argv[2])
+    config.read(args[1])
 
     es_config = ElasticsearchConfig(**make_params(
         config,
@@ -194,14 +237,27 @@ def main():
         config,
         'filter',
         'common_timestamp',
-        'common_field_format'))
+        'common_field_format',
+        'sync_field',
+        'common_index_format',
+        'common_type_format'))
 
     # is this a simulation?
-    test = sys.argv[1] == 'test'
+    test = opts.test
+
+    # is this synchronization?
+    sync = args[0] == 'sync'
 
     # Instantiate a simulation
     if test:
         dynamic_mapping = DynamicMappingSimulation()
+
+    # One of those options must be set
+    if (sync and filter_config.sync_field == None and
+        filter_config.common_timestamp == None):
+        
+        print '[ERROR] sync_field nor common_timestamp are not set. Cowardly Aborting.'
+        return 1
 
     for index in indices:
         if index.db_name not in mongo_client.database_names():
@@ -213,11 +269,78 @@ def main():
         db = mongo_client[index.db_name]
         coll = db[index.coll_name]
 
+        cursor = None
+        if sync:
+            criterion = filter_config.sync_field\
+                        if filter_config.sync_field != None\
+                        else filter_config.common_timestamp
+
+            # Without try, so it fails in case of RequestError (use --test first)
+            result = es.search(
+                index=index.index,
+                doc_type=index.type,
+                body={
+                    'sort':[{
+                        criterion:{
+                            'order':'desc',
+                            }
+                    }]
+                }
+            )
+
+            if result != None and result['hits']['total'] > 0:
+                last = result['hits']['hits'][0]['_source']
+                ts = dateutil.parser.parse(last[criterion])
+
+                '''
+                Gets string representation of timestamp if
+                tsformat was specified in settings for this
+                collections (it is assumed that field
+                index.timestamp is a string), else the
+                datetime.datetime timestamp is left unchanged
+                '''
+                get_ts_relative = lambda index, ts: ts.strftime(index.tsformat)\
+                                  if index.tsformat != None else ts
+
+                # In case a sync_field is enabled or the timestamp field name
+                # was not set for this collection
+                if filter_config.sync_field != None or index.timestamp == None:
+                    '''
+                    Create ObjectId with retrieved timestamp from
+                    elasticsearch
+                    '''
+                    has_objectid = (type(oll.find_one()['_id']) ==
+                                    bson.objectid.ObjectId)
+
+                    if has_objectid:
+                        relative = bson.objectid.ObjectId.from_datetime(ts)
+                        cursor = coll.find({'_id':{'$gt':relative}})
+                    elif index.timestamp != None:
+                        relative = get_ts_relative(index, ts)
+                        cursor = coll.find({index.timestamp:{'$gt':relative}})
+                else:
+                    '''
+                    COMMON_TIMESTAMP is obtained from timestamp
+                    in collection
+                    '''
+                    relative = get_ts_relative(index, ts)
+                    cursor = coll.find({index.timestamp:{'$gt':relative}})
+
+        # </if sync> ==> full
+        else:
+            cursor = coll.find()                
+
+        # Nothing to do
+        if cursor == None or cursor.count() == 0:
+            print '[EMPTY] Nothing to do for %s.%s' %(index.db_name,
+                                              index.coll_name)
+            continue
+            
         # stats data
-        total = coll.find().count()
+        total = cursor.count()
         i = 0
-        
-        for doc in coll.find():
+            
+        for doc in cursor:
             _id = str(doc['_id'])
             del doc['_id']
 
@@ -225,6 +348,9 @@ def main():
             filter_config.add_common_timestamp_ifset(doc,
                                                      index.timestamp,
                                                      index.tsformat)
+
+            # Add a sync timestamp field if set in filters
+            filter_config.add_sync_field_ifset(doc)
             
             if not filter_config.is_default():
                 filter_config.filter_fields(doc,
@@ -255,12 +381,22 @@ def main():
                 # If test, print progress here
                 print_progress(index.db_name, index.coll_name, i, total)
                 continue
+            
+            # Prepare params for elasticsearch index
+            params = dict()
+            params['index'] = index.index if filter_config.common_index_format == None\
+                              else filter_config.common_index_format\
+                                   .format(db=index.db_name,
+                                           coll=index.coll_name)
+            params['doc_type'] = index.type if filter_config.common_type_format == None\
+                                 else filter_config.common_type_format\
+                                      .format(db=index.db_name,
+                                              coll=index.coll_name)
+            params['_id'] = _id
+            params['body'] = doc
 
             # If not a test, actually push to ES
-            es.index(index=index.index,
-                     doc_type=index.type,
-                     id=_id,
-                     body = doc)
+            es.index(**params)
 
             # If not test print progress after indexing
             print_progress(index.db_name, index.coll_name, i, total)
