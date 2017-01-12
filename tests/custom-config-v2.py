@@ -7,6 +7,11 @@ import bson
 import dateutil.parser
 import optparse
 
+def objectid_counter(objectid):
+    # objectid: bson.objectid.ObjectId
+    last3bytes = str(objectid)[-6:]
+    return int('0x'+last3bytes, 16)
+
 class IndexConfig(object):
     def __init__(self, db_name, coll_name,
                  timestamp=None,
@@ -39,22 +44,22 @@ class FilterConfig(object):
     def __init__(self, common_timestamp=None,
                  common_field_format=None,
                  sync_field=None,
-                 sync_field_oid_suffix='__OBJECT_ID',
+                 sync_field_inc_suffix='__INC',
                  common_index_format=None,
                  common_type_format=None):
         
         self.common_timestamp = common_timestamp
         self.common_field_format = common_field_format
         self.sync_field = sync_field
-        self.sync_field_oid_suffix = sync_field_oid_suffix
+        self.sync_field_inc_suffix = sync_field_inc_suffix
         self.common_index_format = common_index_format
         self.common_type_format = common_type_format
 
     def is_default(self):
         return self.common_field_format == None
 
-    def sync_oid_field(self):
-        return self.sync_field + self.sync_field_oid_suffix
+    def sync_inc_field(self):
+        return self.sync_field + self.sync_field_inc_suffix
     
     def get_index_name(self, index):
         if self.common_index_format == None:
@@ -77,7 +82,7 @@ class FilterConfig(object):
         for key in keys:
             if key == self.common_timestamp or\
                key == self.sync_field or\
-               key == self.sync_oid_field():
+               key == self.sync_inc_field():
                 continue
             
             new_key = self.common_field_format\
@@ -129,7 +134,8 @@ class FilterConfig(object):
 
         if type(_id) == bson.objectid.ObjectId:
             doc[self.sync_field] = _id.generation_time
-            doc[self.sync_oid_field()] = str(_id)
+            doc[self.sync_inc_field()] = objectid_counter(_id)
+            #doc[self.sync_inc_field()] = str(_id)
 
         elif self.common_timestamp != None:
             # First run self.add_common_timestamp
@@ -278,7 +284,7 @@ def main():
         'common_timestamp',
         'common_field_format',
         'sync_field',
-        'sync_field_oid_suffix',
+        'sync_field_inc_suffix',
         'common_index_format',
         'common_type_format'))
 
@@ -317,26 +323,35 @@ def main():
 
         cursor = None
         if sync:
-            criterion = filter_config.sync_field\
-                        if filter_config.sync_field != None\
-                        else filter_config.common_timestamp
+            sort_body = { 'sort':[] }
 
+            if filter_config.sync_field != None:
+                criterion = filter_config.sync_field # almost legacy
+                sort_body['sort'].extend([
+                    {
+                        filter_config.sync_field: { 'order': 'desc' }
+                    },
+                    {
+                        filter_config.sync_inc_field(): { 'order': 'desc' }
+                    }
+                ])
+            else:
+                criterion = filter_config.common_timestamp # almost legacy
+                sort_body['sort'].append(
+                    {
+                        filter_config.common_timestamp: { 'order': 'desc' }
+                    })
+                    
             # Without try, so it fails in case of RequestError (use --test first)
             result = es.search(
                 index=filter_config.get_index_name(index),
                 doc_type=filter_config.get_type_name(index),
-                body={
-                    'sort':[{
-                        criterion:{
-                            'order':'desc',
-                            }
-                    }]
-                }
+                body=sort_body
             )
 
             if result != None and result['hits']['total'] > 0:
-                last = result['hits']['hits'][0]['_source']
-                ts = dateutil.parser.parse(last[criterion])
+                last = result['hits']['hits'][0]
+                ts = dateutil.parser.parse(last['_source'][criterion])
 
                 '''
                 Gets string representation of timestamp if
@@ -360,9 +375,8 @@ def main():
 
                     if has_objectid:
                         # Try to fully recover object id
-                        if last.has_key(filter_config.sync_oid_field()):
-                            relative = bson.objectid.ObjectId(
-                                last[filter_config.sync_oid_field()])
+                        if bson.objectid.ObjectId.is_valid(last['_id']):
+                            relative = bson.objectid.ObjectId(last['_id'])
                         # Recover from datetime
                         else:
                             relative = bson.objectid.ObjectId.from_datetime(ts)
