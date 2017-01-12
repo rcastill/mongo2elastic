@@ -481,11 +481,12 @@ def main():
 
                     update_counters[cindex][ctype] += 1 if new_keys else 0
                     continue
-                    
-                es.update(index=cindex,
-                          doc_type=ctype,
-                          id=_id,
-                          body={'doc':merge})
+
+                if merge:
+                    es.update(index=cindex,
+                              doc_type=ctype,
+                              id=_id,
+                              body={'doc':merge})
                 
                 continue
                 
