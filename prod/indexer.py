@@ -466,11 +466,11 @@ def main():
                 would_update = False
                 
                 try:
-                    found = es.get(index=cindex,
-                                   doc_type=ctype,
-                                   id=_id)
-
                     if test:
+                        # Just get it for test reasons
+                        found = es.get(index=cindex,
+                                       doc_type=ctype,
+                                       id=_id)
                         # naive criterion
                         would_update = len(found['_source'].keys()) != len(doc.keys())
                         update_counters[joined] += 1 if would_update else 0
