@@ -486,18 +486,12 @@ def main():
                         
                     
                 except elasticsearch.TransportError as e:
-                    # element not found - insert
+                    # element not found - leave for sync
                     if e.status_code == 404:
-                        # either case increment counter (test or update)
-                        update_counters[joined] += 1
-
-                        if test:
-                            continue
-                        
-                        es.index(index=index.index,
-                                 doc_type=index.type,
-                                 id=_id,
-                                 body=doc)
+                        # Left for sync
+                        pass
+                    else:
+                        raise
 
                 continue
                                                 
