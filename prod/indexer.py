@@ -482,7 +482,7 @@ def main():
                                        id=_id,
                                        body={'doc':doc})
 
-                    update_counters += 1 if result['result'] == 'updated' else 0
+                    update_counters[joined] += 1 if result['result'] == 'updated' else 0
                         
                     
                 except elasticsearch.TransportError as e:
