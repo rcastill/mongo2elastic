@@ -210,24 +210,26 @@ def type2str(t):
     return str(t).replace("<type '", '').replace("'>", '')
 
 def print_title():
-    title = '{0: <9} {1: <40} {2: <40} {3: >20}'.format('%',
-                                                    'DB.COLLECTION',
-                                                    'INDEX/TYPE',
-                                                    'DOCS')
+    title = '{0: <9} {1: <40} {2: <40} {3: <20} {4: >20}'.format('%',
+                                                                 'DB.COLLECTION',
+                                                                 'INDEX/TYPE',
+                                                                 'DOCS',
+                                                                 'STATUS')
     print title
     print '=' * len(title)
 
-def print_progress(index, filter_config, i, total):
-    prog_per = str('[{0:.2f}'.format(float(i)/total*100)) + '%]'
+def print_progress(index, filter_config, i, total, status):
+    prog_per = str('{0:.2f}'.format(float(i)/total*100))
     prog_raw = str(i) + '/' + str(total)
     from_txt = index.db_name + '.' + index.coll_name
     dest_txt = filter_config.get_index_name(index) + '/' +\
                filter_config.get_type_name(index)
     
-    sys.stdout.write('{0: <9} {1: <40} {2: <40} {3: >20}\r'.format(prog_per,
-                                                           from_txt,
-                                                           dest_txt,
-                                                           prog_raw))
+    sys.stdout.write('[{0: >6}%] {1: <40} {2: <40} {3: <20} {4: >20}\r'.format(prog_per,
+                                                                            from_txt,
+                                                                            dest_txt,
+                                                                            prog_raw,
+                                                                            status))
     
     sys.stdout.flush()
     
@@ -322,11 +324,9 @@ def main():
 
     if update:
         update_counters = {}
-        mapping_cache = {}
 
     # Aesthetics
-    if not update:
-        print_title()
+    print_title()
 
     # Print nothing to do in the end
     nothing_to_do = []
@@ -447,10 +447,22 @@ def main():
                                             index.db_name,
                                             index.coll_name)
 
+            # Stat update
+            i += 1
+                
             if update:
+                if test:
+                    print_progress(index, filter_config, i, total, 'CHECKING FOR UPDATES')
+                else:
+                    print_progress(index, filter_config, i, total, 'UPDATING')
+                
                 cindex = filter_config.get_index_name(index)
                 ctype = filter_config.get_type_name(index)
+                joined = '%s.%s' %(cindex, ctype)
 
+                if not update_counters.has_key(joined):
+                    update_counters[joined] = 0
+                
                 would_update = False
                 
                 try:
@@ -458,20 +470,27 @@ def main():
                                    doc_type=ctype,
                                    id=_id)
 
-                    would_update = found != doc                    
                     if test:
+                        # naive criterion
+                        would_update = len(found['_source'].keys()) != len(doc.keys())
+                        update_counters[joined] += 1 if would_update else 0
                         continue
                     
                     # Let elasticsearch merge
-                    es.update(index=index.index,
-                              doc_type=index.type,
-                              id=_id,
-                              body={'doc':doc})
+                    result = es.update(index=index.index,
+                                       doc_type=index.type,
+                                       id=_id,
+                                       body={'doc':doc})
+
+                    update_counters += 1 if result['result'] == 'updated' else 0
+                        
                     
                 except elasticsearch.TransportError as e:
                     # element not found - insert
                     if e.status_code == 404:
-                        would_update = True
+                        # either case increment counter (test or update)
+                        update_counters[joined] += 1
+
                         if test:
                             continue
                         
@@ -480,64 +499,8 @@ def main():
                                  id=_id,
                                  body=doc)
 
-                if test:
-                    if not update_counters.has_key(cindex):
-                        update_counters[cindex] = { ctype: 0 }
-                    elif not update_counters[cindex].has_key(ctype):
-                        update_counters[cindex][ctype] = 0
-
-                    update_counters[cindex][ctype] += 1 if would_update else 0
-                    continue
-
                 continue
-
-                                 
-
-            """if update:
-                cindex = filter_config.get_index_name(index)
-                ctype = filter_config.get_type_name(index)
-
-                if not mapping_cache.has_key(cindex):
-                    mapping_cache[cindex] = {}
-                if not mapping_cache[cindex].has_key(ctype):
-                    result = es.indices.get_mapping(index=cindex,
-                                                    doc_type=ctype)
-                    mapping = set(result\
-                                  [cindex]\
-                                  ['mappings']\
-                                  [ctype]\
-                                  ['properties'])
-                    mapping_cache[cindex][ctype] = mapping
-                    
-
-                # New document keys MINUS current mapping's
-                new_keys = set(doc.keys()) - mapping_cache[cindex][ctype]
-                merge = {}
-
-                # Get merge object
-                for key in new_keys:
-                    merge[key] = doc[key]
-
-                if test:
-                    if not update_counters.has_key(cindex):
-                        update_counters[cindex] = { ctype: 0 }
-                    elif not update_counters[cindex].has_key(ctype):
-                        update_counters[cindex][ctype] = 0
-
-                    update_counters[cindex][ctype] += 1 if new_keys else 0
-                    continue
-
-                if merge:
-                    es.update(index=cindex,
-                              doc_type=ctype,
-                              id=_id,
-                              body={'doc':merge})
-                
-                continue"""
-                
-            # Stat update
-            i += 1
-                
+                                                
             if test:
                 # Check dynamic mapping simulation
                 conflicting_field = dynamic_mapping.test_doc(index,
@@ -557,7 +520,7 @@ def main():
                     return
                 
                 # If test, print progress here
-                print_progress(index, filter_config, i, total)
+                print_progress(index, filter_config, i, total, 'CHECKING')
                 continue
             
             # If not a test, actually push to ES
@@ -567,17 +530,39 @@ def main():
                      body=doc)
 
             # If not test print progress after indexing
-            print_progress(index, filter_config, i, total)
+            print_progress(index, filter_config, i, total, 'INDEXING')
 
         # </for doc in coll.find()>
-        if not update:
-            print
-
-    if update and test:
-        for index in update_counters:
-            for _type in update_counters[index]:
-                print '%d docs would have been updated for %s/%s.'\
-                    %(update_counters[index][_type], index, _type)
+        if test:
+            if update:
+                # joined is in if update: ^
+                if update_counters[joined] > 0:
+                    print_progress(index,
+                                   filter_config,
+                                   i,
+                                   total,
+                                   'BEHIND BY %d DOCS' % update_counters[joined])
+                else:
+                    print_progress(index, filter_config, i, total, 'UP TO DATE')
+            else:
+                print_progress(index, filter_config, i, total, 'OK')
+        else:
+            if update:
+                if update_counters[joined] > 0:
+                    print_progress(index,
+                                   filter_config,
+                                   i,
+                                   total,
+                                   '%d DOCS UPDATED' %update_counters[joined])
+                else:
+                    print_progress(index,
+                                   filter_config,
+                                   i,
+                                   total,
+                                   'UP TO DATE')
+            else:
+                print_progress(index, filter_config, i, total, 'INDEXED')
+        print
 
     print
     for index in nothing_to_do:
