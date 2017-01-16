@@ -1,0 +1,8 @@
+import mongo2elastic as m2e
+
+class Ducksdev(m2e.DB):
+    def __init__(self):
+        pass
+
+    def asdms(self):
+        pass

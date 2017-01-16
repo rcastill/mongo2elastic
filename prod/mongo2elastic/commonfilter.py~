@@ -1,0 +1,4 @@
+class CommonFilter(object):
+    def __init__(self, name):
+        # Just an identifier
+        self.name = name
