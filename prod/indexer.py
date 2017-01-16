@@ -446,9 +446,54 @@ def main():
                 filter_config.filter_fields(doc,
                                             index.db_name,
                                             index.coll_name)
-                
 
             if update:
+                cindex = filter_config.get_index_name(index)
+                ctype = filter_config.get_type_name(index)
+
+                would_update = False
+                
+                try:
+                    found = es.get(index=cindex,
+                                   doc_type=ctype,
+                                   id=_id)
+
+                    would_update = found != doc                    
+                    if test:
+                        continue
+                    
+                    # Let elasticsearch merge
+                    es.update(index=index.index,
+                              doc_type=index.type,
+                              id=_id,
+                              body={'doc':doc})
+                    
+                except elasticsearch.TransportError as e:
+                    # element not found - insert
+                    if e.status_code == 404:
+                        would_update = True
+                        if test:
+                            continue
+                        
+                        es.index(index=index.index,
+                                 doc_type=index.type,
+                                 id=_id,
+                                 body=doc)
+
+                if test:
+                    if not update_counters.has_key(cindex):
+                        update_counters[cindex] = { ctype: 0 }
+                    elif not update_counters[cindex].has_key(ctype):
+                        update_counters[cindex][ctype] = 0
+
+                    update_counters[cindex][ctype] += 1 if would_update else 0
+                    continue
+
+                continue
+
+                                 
+
+            """if update:
                 cindex = filter_config.get_index_name(index)
                 ctype = filter_config.get_type_name(index)
 
@@ -488,7 +533,7 @@ def main():
                               id=_id,
                               body={'doc':merge})
                 
-                continue
+                continue"""
                 
             # Stat update
             i += 1
