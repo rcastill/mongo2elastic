@@ -204,8 +204,8 @@ def make_params(config, section, *param_names):
     return params
 
 def type2str(t):
-    if t == datetime.datetime:
-        return 'datetime'
+    #if t == datetime.datetime:
+    #    return 'datetime'
     
     return str(t).replace("<type '", '').replace("'>", '')
 
